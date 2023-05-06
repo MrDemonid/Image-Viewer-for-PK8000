@@ -1,4 +1,4 @@
-# Image-Viewer-for-CP-M
+# Image-Viewer-for-PK8000
 Image viewer for Soviet computer ПК8000 (PK8000).
 
 Programming language: PL/M-80.
