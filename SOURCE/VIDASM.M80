@@ -1,0 +1,1540 @@
+$title  ('Video Externals')
+        NAME    VIDASM
+
+        CSEG
+
+        public VInit
+        public VDone
+
+        public VGtAdr
+        public Cls
+        public ClsCol
+        public VBSCls
+        public VPrint
+
+        public WShow
+        public WClear
+        public WGoto
+
+        public WWidth
+        public WHeigh
+        public WRSize
+
+        public WCGetW
+        public WStBgr
+        public WBrCol
+        public WClCol
+        public WSlCol
+
+        public WPrint
+
+        public WPutLs
+
+
+        public curCol
+
+
+INTVID  equ 0FEDCh      ; свободная область памяти, используем под обработчик
+INTJMP  equ 0F86Eh      ; переход на пользовательский обработчик прерывания
+INTADR  equ 0F86Fh      ; адрес пользовательского обработчика
+
+CURHIDE equ 0FDBEh      ; флаг видимости/скрытия курсора (FF - скрыт)
+CURBKGR equ 0FA1Ch      ; символ фона под курсором
+CURBADR equ 0FA1Eh      ; адрес видеопамяти сохраненного фона под курсором
+CURX    equ 0FA21h      ; положение курсора на экране
+CURY    equ 0FA22h
+
+VMODE   equ 0FD8Ch      ; номер текущего видеорежима
+
+VIDTBL  equ 0FA00h      ; блок параметров текущего видеорежима (VIDMODE)
+SCRFUL  equ 0FA00h      ; полная ширина экрана, включая не отображаемые области
+LFHIDE  equ 0FA01h      ; кол. не отображаемых символов слева
+SCRWDT  equ 0FA02h      ; видимая ширина экрана
+SCRHGT  equ 0FA03h      ; кол. строк экрана
+RTHIDE  equ 0FA04h      ; кол. не отображаемых символов справа
+SCBUF0  equ 0FA05h      ; адрес буфера экрана реж. 0 и 1
+CLRTAB  equ 0FA07h      ; адрес таб. цвета реж. 1
+CHRGEN  equ 0FA09h      ; адрес знакогенератора реж. 0 и 1,
+SCBUF2  equ CHRGEN      ; или буфера экрана реж. 2
+SGRADR  equ 0FA0Fh      ; адрес массива изображения реж. 2
+COLTBL  equ 0FA11h      ; адрес массива цвета реж. 2
+
+GRFONT  equ 0F000h      ; адрес фонта 8x8
+CHRSAV  equ 0E000h      ; буфер для сохранения знакогенератора
+
+
+
+;------------------------------------------------------------------------
+; настройка знакогенератора
+;------------------------------------------------------------------------
+SetChg:
+        ; save chargen
+        lxi     D, GRFONT+10h*8
+        lxi     H, CHRSAV
+        mvi     C, 8*8
+        push    D
+        push    B
+    @@@1:
+        ldax    D
+        inx     D
+        mov     M, A
+        inx     H
+        dcr     C
+        jnz     @@@1
+        ; set new chargen
+        pop     B
+        pop     D
+        lxi     H, Border
+    @stchg:
+        mov     A, M
+        inx     H
+        stax    D
+        inx     D
+        dcr     C
+        jnz     @stchg
+        ret
+RstChg:
+        ; restore chargen
+        lxi     D, GRFONT+10h*8
+        lxi     H, CHRSAV
+        mvi     C, 8*8
+        jmp     @stchg
+
+
+
+
+; ----------------------------------------------------------------------------
+; установка параметров видеорежима из таблицы и программирование регистров
+; ----------------------------------------------------------------------------
+; in:
+;   BC  - структура VIDMODE
+VidSet:
+        di
+        ; переносим таблицу параметров видеорежима в системную память
+        lxi     H, VIDTBL
+        mvi     E, 19
+    vsetlp:
+        ldax    B
+        inx     B
+        mov     M, A
+        inx     H
+        dcr     E
+        jnz     vsetlp
+        ldax    B
+        sta     VMODE
+        ; задаем адрес буфера экрана (режимы 0 и 1) в видео-ОЗУ
+        lda     SCBUF0+1
+        rrc
+        rrc
+        out     90h
+        ; адрес знакогенератора (режимы 0 и 1) или буфера экрана (режим 2) в видео-ОЗУ
+        lda     CHRGEN+1
+        rrc
+        rrc
+        out     91h
+        ; адрес массива графики (режим 2) в видео-ОЗУ
+        lda     SGRADR+1
+        rrc
+        rrc
+        cma
+        out     92h
+        ; адрес массива цвета (режим 2) в видео-ОЗУ
+        lda     COLTBL+1
+        rrc
+        rrc
+        cma
+        out     93h
+        ret
+
+
+; ----------------------------------------------------------------------------
+; установка видеорежима 2
+; ----------------------------------------------------------------------------
+VInit:
+        call    Cls
+        lxi     B, Mode2
+        call    VidSet
+        ; инициализируем буфер экрана (768 байт)
+        call    VBSCls
+        ; инициализируем массив изображения
+        call    Cls
+        ; устанавливаем палитру
+        mvi     C, 0Fh          ; белый текст на черном фоне
+        call    ClsCol
+        ; set border color
+        xra     A
+        out     88h
+        ; гасим экран
+        in      86h
+        ani     0EFh
+        out     86h
+        ; собственно переходим в граф. режим
+        lda     SGRADR+1
+        ani     11000000b
+        mov     B, A            ; B = биты 14-15 адреса видео-ОЗУ
+        in      84h
+        ani     00001111b
+        ora     B
+        ori     10h             ; выставляем бит граф. режима
+        out     84h
+
+        ; корректируем фонт
+        call    SetChg
+        ei
+        ; разрешаем отображение на экран
+VidExit:
+        in      86h
+        ori     10h
+        out     86h
+        ret
+
+
+
+; ----------------------------------------------------------------------------
+; возврат в видеорежим 0
+; ----------------------------------------------------------------------------
+VDone:
+        call    RstChg
+        call    Cls
+        lxi     B, Mode0
+        call    VidSet
+        call    Cls
+        ; устанавливаем видеорежим 0
+        lda     SCBUF0+1
+        ani     11000000b
+        mov     B, A            ; B = биты 14-15 адреса видео-ОЗУ
+        in      84h
+        ani     00001111b
+        ora     B
+        ori     20h             ; текстовый, 40 символов
+        out     84h
+        ei
+        ; разрешаем отображение курсора
+        mvi     A, 0
+        sta     CURHIDE
+        jmp     VidExit
+
+
+
+;============================================================================;
+;****************************************************************************;
+;****************************************************************************;
+;******************************* PRIMITIVES *********************************;
+;****************************************************************************;
+;****************************************************************************;
+;============================================================================;
+
+
+
+;------------------------------------------------------------------------
+; возвращает адрес видеопамяти по заданным координатам буфера экрана
+;------------------------------------------------------------------------
+; на входе:
+;    C  - x
+;    E  - y
+; на выходе:
+;    HL - адрес видеопамяти в массиве изображения
+; save: BC, DE
+VGtAdr:
+        lhld    SGRADR
+ClkAdr:
+        push    B
+        push    D
+        mov     D, E            ; D = y * 256
+        mov     A, C
+        ral
+        ral
+        ral                     ; A = x * 8
+        ani     11111000b
+        mov     E, A
+        dad     D
+        pop     D
+        pop     B
+        ret
+
+;------------------------------------------------------------------------
+; возвращает адрес в массиве цвета по заданным координатам экрана
+;------------------------------------------------------------------------
+; на входе:
+;    C  - x
+;    E  - y
+; на выходе:
+;    HL - адрес в массиве цвета
+; save: BC, DE
+ColAdr:
+        lhld    COLTBL
+        jmp     ClkAdr
+
+
+;------------------------------------------------------------------------
+; очистка экрана (для реж. 2 - очистка массива изображения (знакогенераторов))
+;------------------------------------------------------------------------
+Cls:
+        lda     VMODE
+        cpi     2
+        jnz     clstxt
+        ; очистка экрана для режима 2
+        lhld    SGRADR
+        mvi     E, 0
+    clrgr:
+        lxi     B, 6144         ; три массива изобр. (знакогенератора) по 2048 байт (3 по 256*8)
+    clsch2:
+        mov     M, E
+        inx     H
+        dcx     B
+        mov     A, C
+        ora     B
+        jnz     clsch2
+        jmp     rstcur
+
+    clstxt:
+        lhld    SCBUF0
+        cpi     1
+        jnz     cls0
+        ; очистка экрана для режима 1
+        lxi     B, 768          ; 32*24
+        mvi     E, 20h
+    clslp:
+        mov     M, E
+        inx     H
+        dcx     B
+        mov     A, B
+        ora     C
+        jnz     clslp
+    rstcur:
+        ; устанавливаем курсор в верхний левый угол
+        xra     A
+        sta     CURBKGR
+        sta     CURX
+        sta     CURY
+        shld    CURBADR
+        ret
+    cls0:
+        ; очистка экрана для режима 0
+        rnc
+        mvi     C, 24
+    cl0lp:
+        ; заполняем невидимую левую часть строки
+        lda     LFHIDE
+        mvi     B, 0
+        call    cl0fil
+        ; заполняем видимую часть строки
+        lda     SCRWDT
+        mvi     B, ' '
+        call    cl0fil
+        ; заполняем правую часть строки
+        lda     RTHIDE
+        sui     5
+        call    cl0fil
+        mvi     A, 5       ;5     ; заканчиваем строку кодами '5 6 0D 0E 00'
+        mov     M, A
+        inr     A          ;6
+        inx     H
+        mov     M, A
+        mvi     A, 0Dh     ;0D
+        inx     H
+        mov     M, A
+        inr     A          ;0E
+        inx     H
+        mov     M, A
+        inx     H
+        mvi     B, 0
+        mov     M, B
+        inx     H
+        ; переходим к следующей строке
+        dcr     C
+        jnz     cl0lp
+        lhld    SCBUF0
+        jmp     rstcur
+
+    cl0fil:
+        ana     A
+        rz
+        mov     M, B
+        inx     H
+        dcr     A
+        jnz     cl0fil
+        ret
+
+
+; ----------------------------------------------------------------------------
+; заполнение буфера экрана дефолтным значением
+; ----------------------------------------------------------------------------
+VBSCls:
+        lhld    SCBUF2
+        mvi     B, 0
+        mvi     C, 3
+    @fivbm:
+        mov     M, B
+        inx     H
+        inr     B
+        jnz     @fivbm
+        dcr     C
+        jnz     @fivbm
+        ret
+
+;------------------------------------------------------------------------
+; Заполняет массив цвета
+;------------------------------------------------------------------------
+; на входе:
+;   C   - цвет фона и текста
+ClsCol:
+        lhld    COLTBL          ; HL - адрес таблицы цвета реж. 2
+        mov     E, C
+        jmp     clrgr
+
+
+
+;------------------------------------------------------------------------
+; вывод строки на экран
+;------------------------------------------------------------------------
+; на входе:
+;       BC      - координаты
+;       DE      - строка
+;                 командные последовательности:
+;                   <ЕSС>F<f><b>  - установка текущего цвета:
+VPrint:
+        push    D
+        mov     E, B
+        call    VGtAdr          ; HL - адрес видеопамяти
+        pop     D
+        xchg
+        ; DE    - vidmem(x,y)
+        ; HL    - string
+    @vprlp:
+        mov     A, M
+        inx     H
+        ora     A
+        rz
+        cpi     27              ; упр. символ?
+        jz      @vprsc
+        call    VCOutA
+        jmp     @vprlp
+  @vprsc: ; команда
+        mov     A, M
+        inx     H
+        cpi     'F'
+        jnz     @vprlp          ; других команд пока не поддерживаем
+        mov     A, M
+        ani     0Fh
+        inx     H
+        mov     C, A            ; C = foreground color
+        mov     A, M
+        inx     H
+        ani     0Fh
+        rlc
+        rlc
+        rlc
+        rlc                     ; A = background color
+        ora     C
+        sta     curCol
+        jmp     @vprlp
+
+
+;------------------------------------------------------------------------
+; вывод одного символа в заданный адрес видеопамяти
+;------------------------------------------------------------------------
+; на входе:
+;       A       - символ
+;       DE      - адрес в массиве изображения
+;       grFont  - фонт 8x8
+;       curCol  - текущий цвет фона и текста
+; save: BC, HL
+VCOutA:
+        push    B
+        push    H
+
+        mov     L, A            ; HL = symbol
+        mvi     H, 0
+
+        ; вычисляем адрес символа в фонте
+        dad     H               ; *2
+        dad     H               ; *4
+        dad     H               ; *8
+        lxi     B, GRFONT
+        dad     B               ; HL = grFont[symbol]
+        ; копируем битовый образ символа в массив изображения
+        mvi     B, 8
+  @ochrl:                       ; цикл вывода одного символа
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        dcr     B
+        jnz     @ochrl
+        lxi     H, -8
+        dad     D               ; HL - addr color array
+        ; корректируем цвет
+        mov     A, H
+        xri     20h
+        mov     H, A            ; HL - адрес символа в массиве цвета
+        lda     curCol
+        mvi     C, 8
+    @ochrc:
+        mov     M, A
+        inx     H
+        dcr     C
+        jnz     @ochrc
+        pop     H
+        pop     B
+        ret
+
+
+;------------------------------------------------------------------------
+; вывод повторяющегося символа в заданный адрес видеопамяти
+;------------------------------------------------------------------------
+; на входе:
+;       A       - символ
+;       DE      - адрес в массиве изображения
+;       C       - count
+;       grFont  - фонт 8x8
+;       curCol  - текущий цвет фона и текста
+; save: BC, HL
+HorLin:
+        push    B
+        push    H
+        ; получаем адрес символа в фонте
+        mov     L, A
+        mvi     H, 0
+        dad     H               ; *2
+        dad     H               ; *4
+        dad     H               ; *8
+        mov     A, C
+        lxi     B, GRFONT
+        dad     B               ; HL = grFont[symbol]
+        mov     C, A
+        ; DE - vidmem
+        ; HL - image
+        ;  C - count
+    @hrlsl:
+        ; копируем один символ
+        mvi     B, 8
+    @hrlsc:
+        mov     A, M
+        inx     H
+        stax    D
+        inx     D
+        dcr     B
+        jnz     @hrlsc
+        ; корректируем цвет
+        lxi     H, -8
+        dad     D
+        mov     A, H
+        xri     20h
+        mov     H, A            ; HL - адрес символа в массиве цвета
+        lda     curCol
+        mvi     B, 8
+    @hrhrc:
+        mov     M, A
+        inx     H
+        dcr     B
+        jnz     @hrhrc
+        ; переходим к копированию в след. позицию
+        lxi     H, -8
+        dad     D
+        dcr     C
+        jnz     @hrlsl
+        pop     H
+        pop     B
+        ret
+
+
+;------------------------------------------------------------------------
+; вывод повторяющегося символа в заданный адрес видеопамяти
+;------------------------------------------------------------------------
+; на входе:
+;       A       - символ
+;       DE      - адрес в массиве изображения
+;       C       - count
+;       grFont  - фонт 8x8
+;       curCol  - текущий цвет фона и текста
+; save: BC, HL
+VerLin:
+        push    B
+        push    H
+        ; получаем адрес символа в фонте
+        mov     L, A
+        mvi     H, 0
+        dad     H               ; *2
+        dad     H               ; *4
+        dad     H               ; *8
+        mov     A, C
+        lxi     B, GRFONT
+        dad     B               ; HL = grFont[symbol]
+        mov     C, A
+        ; DE - vidmem
+        ; HL - image
+        ;  C - count
+    @vrlsl:
+        ; копируем один символ
+        mvi     B, 8
+    @vrlsc:
+        mov     A, M
+        inx     H
+        stax    D
+        inx     D
+        dcr     B
+        jnz     @vrlsc
+        ; корректируем цвет
+        lxi     H, -8
+        dad     D
+        mov     A, H
+        xri     20h
+        mov     H, A            ; HL - адрес символа в массиве цвета
+        lda     curCol
+        mvi     B, 8
+    @vrhrc:
+        mov     M, A
+        inx     H
+        dcr     B
+        jnz     @vrhrc
+        ; переходим к копированию в след. позицию
+        lxi     H, 32*8-8
+        dad     D
+        xchg                    ; DE - next vidmem
+        lxi     H, -32*8
+        dad     D               ; HL - prev vidmem
+        dcr     C
+        jnz     @vrlsl
+        pop     H
+        pop     B
+        ret
+
+
+
+
+
+
+;=============================================================================
+;*****************************************************************************
+;*****************************************************************************
+;******************************* WINDOWS FUNCS *******************************
+;*****************************************************************************
+;*****************************************************************************
+;=============================================================================
+
+; смещения полей структуры WND
+  WNAMELEN      equ 0
+  WTEXTNAME     equ 1
+  WNDX          equ 13          ; координаты окна
+  WNDY          equ 14
+  WCOLNS        equ 15          ; ширина окна
+  WROWS         equ 16          ; высота окна
+  WCURX         equ 17          ; локальные координаты курсора
+  WCURY         equ 18
+  WCURWIDTH     equ 19          ; ширина курсора в окне
+  WBRCLR        equ 20          ; цвет бордюра
+  WCLCLR        equ 21          ; цвет клиентской области окна
+  WSLCLR        equ 22          ; цвет выделенной области окна (курсора)
+
+
+;------------------------------------------------------------------------
+; возвращает цвет бордюра окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;    A  - атрибут цвета
+; save: ALL (exclude A)
+WBrCol:
+        push    H
+        lxi     H, WBRCLR
+        dad     B
+        mov     A, M
+        pop     H
+        ret
+
+;------------------------------------------------------------------------
+; возвращает цвет клиентской части окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;    A  - атрибут цвета
+; save: ALL (exclude A)
+WClCol:
+        push    H
+        lxi     H, WCLCLR
+        dad     B
+        mov     A, M
+        pop     H
+        ret
+
+
+;------------------------------------------------------------------------
+; возвращает цвет выделенной части окна (курсора)
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;    A  - атрибут цвета
+; save: ALL (exclude A)
+WSlCol:
+        push    H
+        lxi     H, WSLCLR
+        dad     B
+        mov     A, M
+        pop     H
+        ret
+
+
+
+;------------------------------------------------------------------------
+; возвращает ширину клиентской части окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;     A - ширина клиентской части окна
+;    CF - =1, если ширина окна меньше 2
+; save: ALL (exclude A)
+WWidth:
+        push    H
+        lxi     H, WCOLNS
+    WGetCl:
+        dad     B
+        mov     A, M
+        sui     2
+        pop     H
+        ret
+
+;------------------------------------------------------------------------
+; возвращает высоту клиентской части окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;     A - высота клиентской части окна
+;    CF - =1, если высота окна меньше 2
+; save: ALL (exclude A)
+WHeigh:
+        push    H
+        lxi     H, WROWS
+        jmp     WGetCl
+
+
+;------------------------------------------------------------------------
+; вычисляет адрес видеопамяти начала окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;    HL - адрес видеопамяти
+; save: BC, DE
+WAddr:
+        push    B
+        push    D
+        lxi     H, WNDX
+        dad     B
+        mov     C, M
+        inx     H
+        mov     E, M
+        inx     H
+        call    VGtAdr          ; HL - vid mem
+        pop     D
+        pop     B
+        ret
+
+
+;------------------------------------------------------------------------
+; вычисляет адрес видеопамяти начала клиентской части окна
+;------------------------------------------------------------------------
+WClient:
+        lxi     D, 0
+;------------------------------------------------------------------------
+; вычисляет адрес видеопамяти по заданным координатам курсора в окне
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+;    D  - x
+;    E  - y
+; на выходе:
+;    HL - адрес видеопамяти
+; save: BC, DE
+WCOffs:
+        push    B
+        push    D
+        lxi     H, WNDY
+        dad     B
+        mov     A, M
+        inr     A
+        add     E
+        mov     E, A
+        dcx     H
+        mov     A, M
+        inr     A
+        add     D
+        mov     C, A
+        call    VGtAdr          ; HL - vid mem
+        pop     D
+        pop     B
+        ret
+
+
+;------------------------------------------------------------------------
+; возвращает координаты курсора
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;    L  - curX
+;    H  - curY
+; save: BC, DE
+WCGet:
+        lxi     H, WCURX
+        dad     B
+        mov     A, M
+        inx     H
+        mov     H, M
+        mov     L, A
+        ret
+
+;------------------------------------------------------------------------
+; возвращает ширину курсора окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; на выходе:
+;    A  - ширина курсора (в символах)
+WCGetW:
+        lxi     H, WCURWIDTH
+        dad     B
+        mov     A, M
+        ret
+
+
+;------------------------------------------------------------------------
+; вывод названия окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+; destroy: all
+WName:
+        ; задаем цвет бордюра
+        call    WBrCol
+        rlc
+        rlc
+        rlc
+        rlc
+        sta     curCol
+        ; выводим заголовок
+        call    WAddr           ; HL = &vid mem, DE = &Wnd.Width
+        call    WWidth          ; A = Wnd.Width-2
+        mov     D, A            ; D = ширина клиентской части окна
+        ldax    B               ; A = длина заголовка окна
+        ora     A               ; если заголовок пустой, то уходим
+        rz
+        inx     B               ; BC = &Wnd.Name
+        mov     E, A            ; E = длина заголовка окна
+        mov     A, D
+        sub     E               ; A = client_width-length
+        jnc     wnam0
+        xra     A               ; A = 0
+        mov     E, D            ; E = client_width
+    wnam0:
+        rar
+        ani     7Fh
+        inr     A               ; A = нач. заголовка (по X) (от 0 до 30)
+        add     A               ; A *= 2
+        add     A               ; A *= 4
+        add     A               ; A *= 8
+        ; корректируем начало видеопамяти
+        add     L
+        mov     L, A
+        mov     A, H
+        aci     0
+        mov     H, A            ; HL = &vidmem + (((client_width)-length) / 2)
+        xchg
+        ; DE - &vidmem
+        ; BC - &text
+        ; L  - length
+    wnmput:
+        ldax    B
+        inx     B
+        call    VCOutA
+        dcr     L
+        jnz     wnmput
+
+        ret
+
+
+
+;------------------------------------------------------------------------
+; вывод заголовка и рамки окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+WFrame:
+        ; задаем цвет бордюра
+        call    WBrCol
+        sta     curCol
+        ; выводим борюр на экран
+        call    WAddr           ; HL = &vid mem, DE = &Wnd.Width
+        call    WWidth
+        mov     E, A            ; E = client width
+        call    WHeigh
+        push    B
+        mov     B, A            ; B - client height
+        mov     C, E            ; C - client width
+        inr     A
+        inr     A
+        mov     E, A            ; E - height
+        mvi     D, 0            ; DE - height
+        dcx     D
+        xchg                    ; DE - vid mem (x, top)
+        mov     H, L
+        mvi     L, 0            ; HL = height * 256
+        dad     D               ; HL - vid mem (x, bottom)
+        ; DE - vidmem (x, top)
+        ; HL - vidmem (x, bottom)
+        ; C - width-2
+        ; B - height-2
+        push    D               ; нач. адрес еще пригодится
+        ; выводим верхнюю полосу
+        mvi     A, 10h
+        call    VCOutA
+        mvi     A, 11h
+        call    HorLin
+        mvi     A, 12h
+        call    VCOutA
+        ; выводим нижнюю полосу
+        xchg
+        mvi     A, 16h
+        call    VCOutA
+        mvi     A, 15h
+        call    HorLin
+        mvi     A, 14h
+        call    VCOutA
+        xchg                    ; DE = vidmem(x+width, top)
+        ; выводим боковые полосы
+        pop     H               ; HL = vidmem(x, top)
+
+; DE    - addr (x+width, y)
+; HL    - addr (x,y)
+; B     - count
+; [SP]  - addr (x,y)
+; [SP+2]- &wnd
+        mov     A, B
+        lxi     B, 32*8         ; BC = screen width
+        dad     B               ; DE += screen width
+        xchg
+        lxi     B, 32*8-8
+        dad     B               ; HL += screen width
+        xchg
+        mov     C, A
+        mvi     A, 13h
+        call    VerLin
+        xchg
+        mvi     A, 17h
+        call    VerLin
+
+        ; выводим название окна
+        pop     B               ; BC - &Wnd
+        call    WName
+        ret
+
+
+
+;------------------------------------------------------------------------
+; очистка окна
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+WClear:
+        ; задаем цвет клиентской части окна
+        call    WClCol
+        sta     curCol
+        call    WHeigh
+        mov     E, A
+        call    WWidth
+        mov     D, A
+        push    D
+        call    WClient         ; HL = адрес начала клиентской части окна
+        pop     B               ; B = Width, C = Height
+        push    H               ; save addr vidmem
+        push    B               ; save size window
+        mvi     A, 32
+        sub     B
+        add     A
+        add     A
+        add     A
+        mov     E, A
+        mvi     D, 0            ; DE = screen increment
+        ; очищаем массив изображения
+        xra     A
+        call    @filrc
+        ; очищаем массив цвета
+        pop     B
+        pop     H
+        mov     A, H
+        xri     20h
+        mov     H, A
+        lda     curCol
+
+; C = Height
+; B = Width
+; HL = vidmem
+; DE = screen increment
+@filrc:
+        push    B
+    @filhl:
+        ; очищаем одно знакоместо
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        mov     M, A
+        inx     H
+        dcr     B
+        jnz     @filhl
+        ; переходим к следующему
+        pop     B
+        dad     D               ; HL += screen increment
+        dcr     C
+        jnz     @filrc
+        ret
+
+
+;------------------------------------------------------------------------
+; установка курсора для текущего окна
+;------------------------------------------------------------------------
+; на входе:
+;    [SP+2] - адрес структуры окна
+;    C      - x
+;    E      - y
+WGoto:
+        mov     D, C            ; D = x, E = y
+        pop     H
+        pop     B               ; BC = &Wnd
+        push    H
+        ; обрезаем по краю окна
+        call    WWidth
+        dcr     A               ; A = maxX
+        cmp     D
+        jnc     wcurxc          ; if (x > maxX) then
+        mov     D, A            ;     x = maxX
+    wcurxc:
+        call    WHeigh
+        dcr     A
+        cmp     E
+        jnc     wcuryc          ; if (y > maxY) then
+        mov     E, A            ;     y = maxY
+    wcuryc:
+        ; сохраняем новые координаты
+        lxi     H, WCURX
+        dad     B
+        mov     M, D
+        inx     H
+        mov     M, E
+        ret
+
+;------------------------------------------------------------------------
+; вывод окна на экран
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+WShow:
+        ; выводим название окна и рамку
+        push    B
+        call    WFrame
+        ; очищаем окно
+        pop     B
+        call    WClear
+        ret
+
+
+
+;------------------------------------------------------------------------
+; изменение размера окна и его центрация на экране
+;------------------------------------------------------------------------
+; на входе:
+;    [SP+2] - адрес структуры окна
+;    C      - width
+;    E      - height
+WRSize:
+        mov     D, C            ; D = new width, E = new height
+        pop     H
+        pop     B               ; BC = &Wnd
+        push    H
+        ; вычисляем новые координаты
+        lda     SCRFUL
+        sub     D
+        rc
+        rrc
+        ani     7Fh
+        mov     L, A            ; L = new x = (SCRWIDTH-width)/2
+        mvi     A, 24
+        sub     E
+        rc
+        rrc
+        ani     7Fh
+        mov     H, A            ; H = new y = (SCRHEIGHT-height)/2
+        ; сохраняем новые данные окна
+        xchg
+        push    H
+        lxi     H, WNDX
+        dad     B
+        mov     M, E
+        inx     H
+        mov     M, D
+        lxi     H, WCOLNS
+        dad     B
+        pop     D
+        mov     M, D
+        inx     H
+        mov     M, E
+        ret
+
+;------------------------------------------------------------------------
+; "подсветка" части окна с текущих координат курсора
+;------------------------------------------------------------------------
+; на входе:
+;    [SP+2] - адрес структуры окна
+;    C      - кол. "подсвечиваемых" символов
+;    E      - атрибут цвета
+WStBgr:
+        mov     D, C            ; D = count, E = color
+        pop     H
+        pop     B               ; BC = &Wnd
+        push    H
+        push    D               ; save param
+        call    WCGet
+        mov     D, L
+        mov     E, H
+        call    WCOffs
+        pop     B
+        xchg
+        ; DE = &vidmem[curX, curY]
+        ; B = count
+        ; C = col
+        mov     L, B
+        mvi     H, 0
+        dad     H
+        dad     H
+        dad     H               ; HL = count*8
+        mov     A, D
+        xri     20h
+        mov     D, A            ; DE = &colmem[curX, curY]
+        xchg
+    @sbkgr:
+        mov     M, C
+        inx     H
+        dcx     D
+        mov     A, D
+        ora     E
+        jnz     @sbkgr
+        ret
+
+
+
+
+
+
+
+;------------------------------------------------------------------------
+; вывод строки в окно в текущие координаты
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+;    DE - строка, заканчивающаяся нулем
+WPrint:
+        push    B
+        push    D
+        lxi     H, WCOLNS
+        dad     B
+        mov     D, M
+        dcr     D
+        dcr     D               ; D = Wnd.ClientWidth
+        inx     H
+        mov     A, M
+        sui     2
+        inx     H
+        mov     E, M            ; E = Wnd.curX
+        inx     H
+        mov     L, M            ; L = Wnd.curY
+        mov     H, A            ; H = Wnd.ClientHeight
+        mov     A, L            ; A = curY
+        xthl                    ; HL = &string
+        push    D
+        ; [SP+4] - Wnd
+        ; [SP+2] - (y, height)
+        ; [SP]   - (x, width)
+        mov     D, E            ; D = Wnd.curX
+        mov     E, A            ; E = Wnd.curY
+        push    H
+        call    WCOffs
+        xchg                    ; DE = &vid mem
+        pop     B               ; BC = &string
+        ; DE = &vidmem(Wnd.CurX, Wnd.curY)
+        ; BC = &string
+    @wprnlp:
+        ldax    B
+        inx     B
+        ora     A
+        jz      @wprnq
+        cpi     0Dh
+        jz      @CrRet
+        jnc     @PtChr
+        cpi     0Ah
+        jz      @LnFd
+  @PtChr:       ; выводим символ в текущие координаты курсора
+        call    @chout
+
+    @wprix:
+        ; инкрементируем X
+        pop     H               ; L - Wnd.curX, H - Wnd.Width
+        mov     A, L
+        inr     A
+        cmp     H
+        jc      @savex
+        ; переход на след. строку
+        xthl
+        mov     A, L            ; A = Wnd.curY
+        inr     A
+        cmp     H
+        jnc     @wprne          ; -> вышли за пределы окна
+        mov     L, A
+        xthl
+        mvi     L, 0
+        push    H
+        mvi     A, 32
+        sub     H
+        add     A
+        add     A
+        add     A
+        mov     L, A
+        mvi     H, 0            ; HL = (32-Wnd.Width)*8
+
+        dad     D
+        xchg                    ; DE += Scr Increment
+        jmp     @wprnlp
+    @savex:
+        mov     L, A
+        push    H
+        jmp     @wprnlp
+@LnFd:  ; перевод каретки на новую строку
+        pop     H
+        xthl                    ; L - Wnd.curY, H - Wnd.Height
+        mov     A, L
+        inr     A
+        cmp     H
+        jnc     @wprne          ; -> вышли за пределы окна
+        mov     L, A
+        xthl
+        push    H
+        lxi     H, 32*8
+        dad     D
+        xchg                    ; DE += Screen Width
+        jmp     @wprnlp
+
+@CrRet: ; перевод каретки в начало строки
+        pop     H
+        mov     A, L
+        mvi     L, 0            ; Wnd.curX = 0
+        push    H
+        add     A
+        add     A
+        add     A
+        mov     L, A
+        mov     A, E
+        sub     L
+        mov     E, A
+        mov     A, D
+        sbi     0
+        mov     D, A
+        jmp     @wprnlp
+
+;  A = char
+; DE = &vidmem(Wnd.CurX, Wnd.curY)
+; destroy: HL
+@chout:
+        push    B
+        mov     L, A            ; HL = symbol
+        mvi     H, 0
+        ; вычисляем адрес символа в фонте
+        dad     H               ; *2
+        dad     H               ; *4
+        dad     H               ; *8
+        lxi     B, GRFONT
+        dad     B               ; HL = grFont[symbol]
+        ; копируем символ в видеопамять
+        mvi     C, 8
+    @chocl:
+        mov     A, M
+        stax    D
+        inx     H
+        inx     D
+        dcr     C
+        jnz     @chocl
+        pop     B
+        ret
+
+    @wprne:
+        xthl
+        push    H
+    @wprnq:     ; уходим
+        ; сохраняем новые координаты курсора и уходим
+        pop     B               ; C = Wnd.curX
+        pop     D               ; E = Wnd.curY
+        call    WGoto
+        ret
+
+
+
+
+;------------------------------------------------------------------------
+; вывод списка файлов в окно
+;------------------------------------------------------------------------
+; на входе:
+;    BC - адрес структуры окна
+;    DE - адрес списка файлов (одна запись равна 16 байтам)
+WPutLs:
+        push    D
+        call    WHeigh
+        push    PSW
+        call    WClient         ; HL - адрес видеопамяти
+        lxi     D, 8
+        dad     D
+        pop     PSW
+        mov     E, A            ; E - высота клиентской части окна
+        pop     B               ; BC - список файлов
+        inx     B               ; пропускаем номер диска
+        xchg
+        ; выводим левый столбец
+        push    H               ; сохраняем для правого столбца
+        push    D
+        call    @plcol
+        ; выводим правый столбц
+        pop     D
+        lxi     H, 14*8
+        dad     D
+        xchg
+        pop     H
+        call    @plcol
+        ret
+
+        ; вывод одного столбца списка файлов
+        ; DE - vidmem
+        ; BC - список файлов (массив записей по 16 байт)
+        ;  L - высота окна
+  @plcol:
+        push    H               ; save L
+        ; выводим имя файла
+        ldax    B
+        ora     A
+        jz      @plempty        ; -> список закончился, очищаем остаток окна
+
+        mvi     H, 8
+    @plfnr:
+        ldax    B
+        inx     B
+        mov     L, A            ; HL = symbol
+        mov     A, H            ; A = len filename
+        mvi     H, 0
+        push    B
+        ; вычисляем адрес символа в фонте
+        dad     H               ; *2
+        dad     H               ; *4
+        dad     H               ; *8
+        lxi     B, GRFONT
+        dad     B               ; HL = grFont[symbol]
+        mov     B, A
+        ; копируем битовый образ символа в массив изображения
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     H, B
+        pop     B               ; restore BC (filename)
+        dcr     H
+        jnz     @plfnr
+        ; пробел
+        xra     A
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        stax    D
+        inx     D
+        ; и расширение файла
+        mvi     H, 3
+    @plext:
+        ldax    B
+        inx     B
+        mov     L, A            ; HL = symbol
+        mov     A, H            ; A = len filename
+        mvi     H, 0
+        push    B
+        ; вычисляем адрес символа в фонте
+        dad     H               ; *2
+        dad     H               ; *4
+        dad     H               ; *8
+        lxi     B, GRFONT
+        dad     B               ; HL = grFont[symbol]
+        mov     B, A
+        ; копируем битовый образ символа в массив изображения
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     A, M
+        stax    D
+        inx     D
+        inx     H
+        mov     H, B
+        pop     B
+        dcr     H
+        jnz     @plext
+
+        ; переходим к выводу следующего файлу по списку
+        lxi     H, 16-11
+        dad     B
+        mov     C, L
+        mov     B, H
+    @plnxt:
+        lxi     H, (32-12)*8
+        dad     D
+        xchg
+        pop     H
+        dcr     L
+        jnz     @plcol
+        ret
+
+        ; вывод пустой строки
+  @plempty:
+        mvi     H, 12*8
+        xra     A
+  @pleml:
+        stax    D
+        inx     D
+        dcr     H
+        jnz     @pleml
+        jmp     @plnxt
+
+
+
+
+
+
+
+
+
+
+
+
+curCol: db 0Fh          ; текущий цвет
+
+
+; таблицы параметров видеорежимов 0 и 2
+Mode0:  db 64           ; полная ширина экрана, включая не отображаемые области
+        db 0            ; кол. не отображаемых символов слева
+        db 40           ; видимая ширина экрана
+        db 24           ; кол. строк экрана
+        db 24           ; кол. пропускаемых символов справа
+        dw 0E000h       ; адрес буфера экрана (реж. 0 и 1)
+        dw 0E400h       ; адрес таблицы цвета (реж. 1)
+        dw 0F000h       ; адрес знакогенератора (реж. 0 и 1)
+        dw 0
+        dw 0
+        dw 0
+        dw 0
+        db 0            ; номер видеорежима
+
+Mode2:  db 32           ; полная ширина экрана, включая не отображаемые области
+        db 0            ; кол. не отображаемых символов слева
+        db 32           ; видимая ширина экрана
+        db 24           ; кол. строк экрана
+        db 00           ; кол. пропускаемых символов справа
+        dw 0
+        dw 0
+        dw 9800h        ; адрес буфера экрана (реж. 2)
+        dw 0
+        dw 0
+        dw 8000h        ; массив изображения для режима 2
+        dw 0A000h       ; массив цвета для режима 2
+        db 2            ; номер видеорежима
+
+; битмапы для бордюров
+Border: db 7fh,7fh,7fh,7fh,7fh,7fh,7fh,7fh        ; ▌ left top corner
+        db 0ffh,0ffh,0ffh,0ffh,0ffh,0ffh,0ffh,0ffh; █ top
+        db 0feh,0feh,0feh,0feh,0feh,0feh,0feh,0feh; ▐ right top corner
+        db 16h,16h,16h,16h,16h,16h,16h,16h        ; │ right
+        db 16h,16h,16h,0F6h,06h,0FEh,0FEh,00h     ; ┘ right bot corner
+        db 00h,00h,00h,0ffh,00h,0ffh,0ffh,00h     ; ─ bottom
+        db 68h,68h,68h,6Fh,60h,7Fh,7Fh,00h        ; └ left bot corner
+        db 68h,68h,68h,68h,68h,68h,68h,68h        ; │ left
+
+
+END

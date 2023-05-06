@@ -1,0 +1,48 @@
+ChkTyp: proc(FName) byte external;
+  declare
+    FName address;
+end;
+
+GetTyp: proc(FName, Size) byte external;
+  declare
+    FName address,
+    Size  word;
+end;
+
+
+
+doSTD: proc(Buff) external;
+  declare
+    Buff address;
+end;
+
+doTmx: proc(Buff) external;
+  declare
+    Buff address;
+end;
+
+doMlt: proc(Buff) external;
+  declare
+    Buff address;
+end;
+
+doMc: proc(Buff) external;
+  declare
+    Buff address;
+end;
+
+doIfl: proc(Buff) external;
+  declare
+    Buff address;
+end;
+
+doSC2: proc(Buff) external;
+  declare
+    Buff address;
+end;
+
+doVM2: proc(Buff) external;
+  declare
+    Buff address;
+end;
+

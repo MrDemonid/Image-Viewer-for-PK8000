@@ -1,0 +1,133 @@
+declare
+  curCol byte external;
+
+
+
+declare WINDOW literally 'STRUCTURE (
+  NameLen   byte,
+  Name(12)  byte,
+  x         byte,
+  y         byte,
+  Width     byte,
+  Height    byte,
+  CurX      byte,
+  CurY      byte,
+  CurWidth  byte,
+  BordCol   byte,
+  ClientCol byte,
+  SelCol    byte)';
+
+
+
+VInit: proc external;
+end;
+
+VDone: proc external;
+end;
+
+
+VGtAdr: proc(x, y) address external;
+  declare
+    x byte,
+    y byte;
+end;
+
+
+Cls: proc external;
+end;
+
+ClsCol: proc(Col) external;
+  declare
+    Col byte;
+end;
+
+VBSCls: proc external;
+end;
+
+VPrint: proc(CoordXY, Str$Ptr) external;
+  declare
+    CoordXY word,
+    Str$Ptr address;
+end;
+
+
+
+
+W$Show: proc(Wnd) external;
+  declare
+    Wnd address;
+end;
+
+W$Clear: proc(Wnd) external;
+  declare
+    Wnd address;
+end;
+
+W$RSize: proc(Wnd, w, h) external;
+  declare
+    Wnd address,
+    w   byte,
+    h   byte;
+end;
+
+W$Width: proc(Wnd) byte external;
+  declare
+    Wnd address;
+end;
+
+W$Heigh: proc(Wnd) byte external;
+  declare
+    Wnd address;
+end;
+
+
+
+W$Goto: proc(Wnd, x, y) external;
+  declare
+    Wnd address,
+    x   byte,
+    y   byte;
+end;
+
+W$CGetW: proc(Wnd) byte external;
+  declare
+    Wnd   address;
+end;
+
+W$StBgr: proc(Wnd, Count, Color) external;
+  declare
+    Wnd   address,
+    Count byte,
+    Color byte;
+end;
+
+W$BrCol: proc(Wnd) byte external;
+  declare
+    Wnd address;
+end;
+
+W$ClCol: proc(Wnd) byte external;
+  declare
+    Wnd address;
+end;
+
+W$SlCol: proc(Wnd) byte external;
+  declare
+    Wnd address;
+end;
+
+
+
+
+W$Print: proc(Wnd, Text) external;
+  declare
+    Wnd  address,
+    Text address;
+end;
+
+
+W$PutLs: proc(Wnd, Lst$Ptr) external;
+  declare
+    Wnd     address,
+    Lst$Ptr address;
+end;

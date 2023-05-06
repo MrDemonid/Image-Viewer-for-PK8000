@@ -1,0 +1,16 @@
+declare FCB$STRUC literally 'STRUCTURE (
+ et        byte,
+ fname (8) byte,
+ fext (3)  byte,
+ ex        byte,
+ nu        address,
+ rc        byte,
+ map (16)  byte,
+ nr        byte,
+ r0r1      address,
+ r2        byte)';
+
+declare CUR$DRIVE byte at (4);      /* current disk and user */
+declare FCB FCB$STRUC at (05Ch);    /* default FCB */
+declare IOBUF (128) byte at (80h);  /* default file I/O buffer */
+

@@ -1,0 +1,39 @@
+declare
+    KEY$ESC     LITERALLY '3Ah',
+    KEY$ENTER   LITERALLY '3Fh',
+    KEY$SPACE   LITERALLY '40h',
+    KEY$TAB     LITERALLY '3Bh',
+    KEY$UP      LITERALLY '45h',
+    KEY$DOWN    LITERALLY '46h',
+    KEY$LEFT    LITERALLY '44h',
+    KEY$RIGHT   LITERALLY '47h',
+    KEY$PgUP    LITERALLY '4Eh',
+    KEY$PgDOWN  LITERALLY '4Dh',
+    KEY$F1      LITERALLY '35h',
+    KEY$F2      LITERALLY '36h',
+    KEY$F3      LITERALLY '37h',
+    KEY$F4      LITERALLY '38h',
+    KEY$F5      LITERALLY '39h',
+
+    KEY$D       LITERALLY '19h',
+    KEY$L       LITERALLY '21h',
+    KEY$N       LITERALLY '23h',
+    KEY$P       LITERALLY '25h',
+    KEY$R       LITERALLY '26h',
+    KEY$S       LITERALLY '28h',
+    KEY$U       LITERALLY '2Ah',
+    KEY$W       LITERALLY '2Ch';
+
+
+
+KbInit: proc external;
+end;
+
+KbDone: proc external;
+end;
+
+KbHit: proc byte external;
+end;
+
+GetCh: proc byte external;
+end;

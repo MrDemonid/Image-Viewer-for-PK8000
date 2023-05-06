@@ -1,0 +1,35 @@
+$nolist
+
+declare lit        literally 'LITERALLY';
+declare word       literally 'ADDRESS';
+declare dword      literally '(2) ADDRESS';
+declare bool       literally 'BYTE';
+declare proc       literally 'PROCEDURE';
+
+declare CR         literally '0Dh',
+        LF         literally '0Ah',
+        TAB        literally '09h',
+        SOH        literally '01h',
+        STX        literally '02h',
+        ETX        literally '03h',
+        EOT        literally '04h',
+        ACK        literally '06h',
+        NAK        literally '15h',
+        XON        literally '11h',
+        XOF        literally '13h',
+        CAN        literally '18h',
+        SUB        literally '1Ah',
+        RUBOUT     literally '7Fh';
+
+declare FALSE      literally '0',
+        TRUE       literally 'NOT FALSE';
+
+
+declare
+        JMP        literally '0C3H',     /* 8080 JUMP INSTRUCTION */
+        RET        literally '0C9H';     /* 8080 RETURN */
+
+$list
+
+
+

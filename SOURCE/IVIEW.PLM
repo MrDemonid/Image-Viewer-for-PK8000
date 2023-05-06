@@ -1,0 +1,1044 @@
+/*****************************************************************************
+ *                                                                           *
+ * CP/M Image viewer ver. 1.3, for PK8000                                    *
+ * Copyright (C) 2020 Andrey Hlus, Ivan Gorodetsky                           *
+ *                                                                           *
+ *****************************************************************************/
+EXCPM: DO;
+
+$CODE
+
+$INCLUDE(:F1:COMMON.LIT)
+$INCLUDE(:F1:CPM.LIT)
+$INCLUDE(:F1:VIDEO.EXT)
+$INCLUDE(:F1:KEYB.EXT)
+$INCLUDE(:F1:UTIL.EXT)
+$INCLUDE(:F1:VIEWER.EXT)
+
+/* формируем переход на начало кода */
+declare JUMP byte data(0C3h);
+declare JADR address data(.MYENTRY); /* skip stack initialize, use default stack */
+/*declare JADR address data(.MYENTRY-3); /* with stack initialize */
+
+declare VERSION(*) byte data('Image viewer 1.3','$');
+
+
+/*****************************************************************************
+*
+*                         СТРУКТУРЫ И КОНСТАНТЫ
+*
+******************************************************************************/
+
+declare
+  MAXDRIVES     lit '12';       /* макс. количество дисков в системе */
+
+
+
+/*
+  структура списка файлов
+*/
+declare
+  TLIST lit 'STRUCTURE (
+    Text$Ptr    address,
+    Top         word,
+    Sel         word,
+    Num         word,
+    Max         word,
+    Free$Ptr    address)';
+
+
+declare
+  REC$SIZE      lit '16';       /* размер записи в списке файлов */
+
+
+/*
+  типы графических файлов
+*/
+declare
+  UNK$TYPE      lit '0',        /* неизвестный формат */
+  STD$TYPE      lit '1',        /* стандартный спектрумовский */
+  SCR$TYPE      lit '2',        /* timex 8x1 */
+  MLT$TYPE      lit '3',        /* multicolor 8x1 */
+  MC$TYPE       lit '4',        /* multicolor 8x1 */
+  IFL$TYPE      lit '5',        /* multicolor 8x2 */
+  SC2$TYPE      lit '6';        /* нативный формат MSX */
+
+
+declare
+  Top$Mem       lit '4400h',    /* верхушка свободной памяти */
+  IO$Buffer     lit 'Top$Mem',  /* здесь же буфер для загрузки файла */
+  IO$Size       lit '8000h-Top$Mem';
+
+
+
+/*****************************************************************************
+*
+*                                 DATA
+*
+******************************************************************************/
+
+
+
+declare
+  FMem$Ptr      address,        /* адрес свободной памяти */
+  FMem$Size     word;           /* и ее размер */
+
+declare
+  StartDrive    byte,           /* диск запуска программы: 0 - A, 1 - B, etc. */
+  StartUser     byte;           /* user-область запуска программы */
+
+
+/*
+  Окна
+*/
+declare
+  Disk$Wnd      WINDOW data (5, 'Drive       ',3,9,27,5,0,0, 3, 0EFh, 0EFh, 0B8h),
+  Disk$List     TLIST;          /* список дисков в системе */
+
+declare
+  User$Wnd      WINDOW data (4, 'User        ',3,9,26,5,0,0, 4, 0EFh, 0EFh, 0B8h),
+  User$List     TLIST;          /* список user-областей */
+
+declare
+  File$Wnd      WINDOW data (7, 'Browser     ',1,2,30,20,0,0, 12, 4Fh, 47h, 061h),
+  File$List     TLIST;          /* список файлов на текущем диске */
+
+declare
+  Wait$Wnd      WINDOW data (4, 'Load        ',7,9,18,5,0,0, 0, 0AFh, 0A1h, 061h);
+
+declare
+  Error$Wnd     WINDOW data (5, 'Error       ',5,9,21,5,0,0, 0, 08Fh, 08Bh, 061h);
+
+declare
+  About$Wnd     WINDOW data (5, 'About       ',5,4,22,16,0,0, 0, 061h, 06Fh, 061h);
+
+
+declare
+  Stat$View(*)  byte data (27,'F',8,14,'F1',27,'F',1,14,' About ',
+                           27,'F',8,14,'D',27,'F',1,14,' Drive ',
+                           27,'F',8,14,'U',27,'F',1,14,' User ',
+                           27,'F',8,14,'ESC',27,'F',1,14,' Exit',0),
+  About$Str(*)  byte data ('  Image viewer 1.3',13,10,13,10,
+                           ' Supported formats:',13,10,
+                           '  standart (scr)',13,10,
+                           '  timex (scr)',13,10,
+                           '  multicolor (mlt)',13,10,
+                           '  multicolor (mc)',13,10,
+                           '  multicolor (ifl)',13,10,
+                           '  MSX (sc2)',13,10,
+                           '  ',0F0h,0EBh,'8000 (vm2)',13,10,13,10,
+                           ' Development team:',13,10,
+                           '    Andrey Hlus',13,10,
+                           '  Ivan Gorodetsky',0);
+/*
+  Stat$View(*)  byte data (27,'F',8,14,'F1',27,'F',1,14,' About  ',
+                           27,'F',8,14,'D',27,'F',1,14,' Drive     ',
+                           27,'F',8,14,'ESC',27,'F',1,14,' Exit',0),
+declare
+  Stat$Help(*)  byte data (27,'F',8,14,90h,' ',8Fh,27,'F',1,14,' Select page      ',0);
+*/
+
+
+
+
+/*****************************************************************************
+*
+*                            HORIZONTAL LISTS
+*
+******************************************************************************/
+
+Hor$Hide$Cur: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        w byte,
+        List based Lst$Ptr TLIST;
+    w = W$CGetW(Wnd);
+    call W$Goto(Wnd, (List.Sel-List.Top)*w, 1);
+    call W$StBgr(Wnd, w, W$ClCol(Wnd));
+end;
+
+Hor$Show$Cur: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        w byte,
+        List based Lst$Ptr TLIST;
+    w = W$CGetW(Wnd);
+    call W$Goto(Wnd, (List.Sel-List.Top)*w, 1);
+    call W$StBgr(Wnd, w, W$SlCol(Wnd));
+end;
+
+/*
+  Полная перерисовка в окне списка (горизонтальный)
+*/
+Lst$HShow: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        Name$Ptr address,
+        List based Lst$Ptr TLIST,
+        w byte,
+        curw byte,
+        x byte;
+
+    w = W$Width(Wnd);
+    curw = W$CGetW(Wnd);
+    Name$Ptr = List.Text$Ptr+(List.Top*REC$SIZE);
+    if List.Num*curw < w then
+        x = (w - List.Num*curw) / 2;
+    else
+        x = 0;
+    w = w - 1;
+    do while x < w;
+        call W$Goto(Wnd, x , 1);
+        call W$Print(Wnd, Name$Ptr);
+        Name$Ptr = Name$Ptr + REC$SIZE;
+        x = x + curw;
+    end;
+
+end;
+
+/*
+  перемещает курсор влево на одну позицию
+*/
+Lst$HLeft: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        List based Lst$Ptr TLIST;
+
+    if List.Sel = 0 then
+        return;
+    call Hor$Hide$Cur(Wnd, Lst$Ptr);
+
+    if List.Sel > List.Top then
+        /* просто сдвигаем курсор */
+        List.Sel = List.Sel - 1;
+    else do;
+        /* сдвигаем строку полностью */
+        List.Top = List.Top - 1;
+        List.Sel = List.Top;
+        call Lst$HShow(Wnd, Lst$Ptr);
+    end;
+
+    call Hor$Show$Cur(Wnd, Lst$Ptr);
+end;
+
+/*
+  перемещает курсор вправо на одну позицию
+*/
+Lst$HRight: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        List based Lst$Ptr TLIST,
+        nRec byte;
+
+    if List.Sel = List.Num-1 then
+        return;
+
+    nRec = W$Width(Wnd) / W$CGetW(Wnd);
+    call Hor$Hide$Cur(Wnd, Lst$Ptr);
+
+    if List.Sel-List.Top < nRec-1 then
+        /* просто сдвигаем курсор */
+        List.Sel = List.Sel + 1;
+    else do;
+        /* сдвигаем строку полностью */
+        List.Top = List.Top + 1;
+        List.Sel = List.Sel + 1;
+        call Lst$HShow(Wnd, Lst$Ptr);
+    end;
+
+    call Hor$Show$Cur(Wnd, Lst$Ptr);
+end;
+
+
+/*
+  цикл выбора в гор. списке; возвращает номер текущей записи или -1
+*/
+Lst$HSel: proc(Wnd, Lst$Ptr) byte;
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        Name$Ptr address,
+        Name based Name$Ptr byte,
+        List based Lst$Ptr TLIST,
+        key byte;
+
+    call Hor$Show$Cur(Wnd, Lst$Ptr);
+    do while 1;
+        key = GetCh;
+        if key = KEY$LEFT then
+            call Lst$HLeft(Wnd, Lst$Ptr);
+        else if key = KEY$RIGHT then
+            call Lst$HRight(Wnd, Lst$Ptr);
+        else if key = KEY$ENTER then
+            do;
+                call Hor$Hide$Cur(Wnd, Lst$Ptr);
+                return List.Sel;
+            end;
+        else if key = KEY$ESC then
+            do;
+                /*
+                call Hor$Hide$Cur(Wnd, Lst$Ptr);
+                */
+                return -1;
+            end;
+    end;
+end;
+
+
+
+/*****************************************************************************
+*
+*                            VERTICAL LISTS
+*
+******************************************************************************/
+Show$Cursor: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        List based Lst$Ptr TLIST,
+        (x,y,h,w) byte;
+    h = W$Heigh(Wnd);
+    x = 1;
+    y = List.Sel-List.Top;
+    w = W$CGetW(Wnd);
+    if y >= h then
+        do;
+            x = x + w + 2;
+            y = y - h;
+        end;
+    call W$Goto(Wnd, x, y);
+    call W$StBgr(Wnd, w, W$SlCol(Wnd));
+end;
+
+
+Hide$Cursor: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        List based Lst$Ptr TLIST,
+        (x,y,h,w) byte;
+    h = W$Heigh(Wnd);
+    x = 1;
+    y = List.Sel-List.Top;
+    w = W$CGetW(Wnd);
+    if y >= h then
+        do;
+            x = x + w + 2;
+            y = y - h;
+        end;
+    call W$Goto(Wnd, x, y);
+    call W$StBgr(Wnd, w, W$ClCol(Wnd));
+end;
+
+
+/*
+  перемещение курсора вниз на строку
+*/
+Lst$Down: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        Height byte,
+        List based Lst$Ptr TLIST;
+
+    if (List.Sel+1) >= List.Num then
+        return;
+
+    Height = W$Heigh(Wnd) * 2;
+    if (List.Sel+1) < (List.Top+Height) then
+        do;
+            /* просто перерисовываем курсор */
+            call Hide$Cursor(Wnd, Lst$Ptr);
+            List.Sel = List.Sel+1;
+            call Show$Cursor(Wnd, Lst$Ptr);
+        end;
+    else if (List.Top+Height) < List.Num then
+        do;
+            /* полностью перерисовываем окно */
+            List.Sel = List.Sel + 1;
+            List.Top = List.Top + 1;
+            call W$PutLs(.File$Wnd, List.Text$Ptr+(List.Top*REC$SIZE));
+        end;
+end;
+
+
+/*
+  Перемещение курсора вверх на строку
+*/
+Lst$Up: proc(Wnd, Lst$Ptr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        List based Lst$Ptr TLIST;
+    if List.Sel = 0 then
+        return;
+
+    if List.Sel > List.Top then
+        do;
+            /* просто перерисовываем курсор */
+            call Hide$Cursor(Wnd, Lst$Ptr);
+            List.Sel = List.Sel - 1;
+            call Show$Cursor(Wnd, Lst$Ptr);
+        end;
+    else if List.Top > 0 then
+        do;
+            /* полностью перерисовываем окно */
+            List.Top = List.Top - 1;
+            List.Sel = List.Sel - 1;
+            call W$PutLs(.File$Wnd, List.Text$Ptr+(List.Top*REC$SIZE));
+        end;
+end;
+
+
+/*
+  Перемещение курсора вверх на страницу
+*/
+Lst$MoveUp: proc(Wnd, Lst$Ptr, Incr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        Height byte,
+        Incr byte,
+        List based Lst$Ptr TLIST;
+
+    if List.Sel = 0 then
+        return;
+
+    Height = W$Heigh(Wnd)*2-1;
+    if List.Top = 0 then
+        do;
+            /* просто перерисовываем курсор */
+            call Hide$Cursor(Wnd, Lst$Ptr);
+            List.Sel = 0;
+            call Show$Cursor(Wnd, Lst$Ptr);
+        end;
+    else
+        do;
+            /* полностью перерисовываем окно */
+            if List.Sel <> List.Top then
+                call Hide$Cursor(Wnd, Lst$Ptr);
+            if List.Sel >= Incr then
+                List.Sel = List.Sel - Incr;
+            else
+                List.Sel = 0;
+            if List.Top > List.Sel then
+                List.Top = List.Sel;
+            call Show$Cursor(Wnd, Lst$Ptr);
+            call W$PutLs(.File$Wnd, List.Text$Ptr+(List.Top*REC$SIZE));
+        end;
+end;
+
+/*
+  перемещение курсора вниз на несколько позиций
+*/
+Lst$MoveDown: proc(Wnd, Lst$Ptr, Incr);
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        Incr byte,
+        List based Lst$Ptr TLIST,
+        Height byte,
+        SelNew word;
+    if (List.Sel+1) >= List.Num then
+        return;
+
+    Height = W$Heigh(Wnd)*2-1;
+
+    SelNew = List.Sel + Incr;
+    if SelNew >= List.Num then
+        SelNew = List.Num-1;
+    if SelNew >= (List.Top+Height) then
+        do;
+            if List.Sel <> List.Top+Height then
+                call Hide$Cursor(Wnd, Lst$Ptr);
+            /* придется сдвинуть список */
+            List.Sel = SelNew;
+            List.Top = SelNew - Height;
+            call Show$Cursor(Wnd, Lst$Ptr);
+            call W$PutLs(.File$Wnd, List.Text$Ptr+(List.Top*REC$SIZE));
+        end;
+    else
+        do;
+            /* просто перерисовываем курсор */
+            call Hide$Cursor(Wnd, Lst$Ptr);
+            List.Sel = SelNew;
+            call Show$Cursor(Wnd, Lst$Ptr);
+        end;
+end;
+
+
+/*
+  перемещение курсора вниз на строку (в скрытом режиме)
+*/
+Lst$HideDown: proc(Wnd, Lst$Ptr) byte;
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        Height byte,
+        List based Lst$Ptr TLIST;
+
+    if (List.Sel+1) >= List.Num then
+        return 0;
+
+    Height = W$Heigh(Wnd) * 2;
+    if (List.Sel+1) < (List.Top+Height) then
+        do;
+            /* просто перемещаем курсор */
+            List.Sel = List.Sel+1;
+        end;
+    else if (List.Top+Height) < List.Num then
+        do;
+            /* полностью перерисовываем окно */
+            List.Sel = List.Sel + 1;
+            List.Top = List.Top + 1;
+        end;
+    return 1;
+end;
+
+/*
+  Перемещение курсора вверх на строку (в скрытом режиме)
+*/
+Lst$HideUp: proc(Wnd, Lst$Ptr) byte;
+    declare
+        Wnd address,
+        Lst$Ptr address,
+        List based Lst$Ptr TLIST;
+    if List.Sel = 0 then
+        return 0;
+
+    if List.Sel > List.Top then
+        do;
+            /* просто перерисовываем курсор */
+            List.Sel = List.Sel - 1;
+        end;
+    else if List.Top > 0 then
+        do;
+            /* полностью перерисовываем окно */
+            List.Top = List.Top - 1;
+            List.Sel = List.Sel - 1;
+        end;
+    return 1;
+end;
+
+
+
+
+
+
+/*****************************************************************************
+*
+*                                UTILITES
+*
+******************************************************************************/
+
+Mem$Alloc: proc(Size) address;
+    declare
+        Size word,
+        Addr address;
+    if Size > FMem$Size then
+        return 0;
+    FMem$Size = FMem$Size - Size;
+    Addr = FMem$Ptr;
+    FMem$Ptr = FMem$Ptr + Size;
+    return Addr;
+end;
+
+/*
+  Меняет название окна по отображаемому диску
+  на входе:
+    Wnd$Ptr - адрес окна
+    nDisk   - номер дисковода (0 - A, 1 - B, etc.)
+*/
+Wnd$SetName: proc(Wnd$Ptr, nDisk);
+    declare
+        Wnd$Ptr address,
+        nDisk byte,
+        nUser byte,
+        i byte,
+        Ofs address,
+        Wnd based Wnd$Ptr WINDOW;
+
+    nUser = Get$Usr;
+    call memcpy(.('A:\1',0,0), .Wnd.Name, 6);
+    Wnd.Name(0) = nDisk + 'A';
+    i = 3;
+    if nUser > 9 then
+        do;
+            i = i+1;
+            nUser = nUser - 10;
+        end;
+    Wnd.Name(i) = nUser+'0';
+    Wnd.NameLen = strlen(.Wnd.Name);
+end;
+
+/*
+  Добавляет запись в список
+  на входе:
+    Lst$Ptr - адрес списка
+    Str$Ptr - номер дисковода + имя файла в формате CP/M (11 байт)
+*/
+Lst$Insert: proc(Lst$Ptr, Str$Ptr);
+    declare
+        Lst$Ptr address,
+        Str$Ptr address,
+        Next$Ptr address,
+        Lst based Lst$Ptr TLIST,
+        Next based Next$Ptr(16) byte;
+
+    if Lst.Num >= Lst.Max then
+        return;
+    call memcpy(Str$Ptr, Lst.Free$Ptr, REC$SIZE-1);
+    call memset(Lst.Free$Ptr+REC$SIZE-1, 1, 0);
+    Lst.Num = Lst.Num + 1;
+    Lst.Free$Ptr = Lst.Free$Ptr + REC$SIZE;
+    Next$Ptr = Lst.Free$Ptr;
+    Next(1) = 0;                /* помечаем след. запись пустой */
+end;
+
+
+Lst$Reset: proc(Lst$Ptr);
+    declare
+        Lst$Ptr address,
+        Next$Ptr address,
+        Next based Next$Ptr(16) byte,
+        List based Lst$Ptr TLIST;
+    List.Top = 0;
+    List.Sel = 0;
+    List.Num = 0;
+    List.Free$Ptr = List.Text$Ptr;
+    Next$Ptr = List.Free$Ptr;
+    Next(1) = 0;                /* помечаем след. запись пустой */
+end;
+
+/*
+  инициализация списка
+*/
+Lst$Init: proc(Lst$Ptr, Size);
+    declare
+        Lst$Ptr address,
+        Size word,
+        List based Lst$Ptr TLIST;
+    List.Max = (Size / REC$SIZE) - 1;
+    List.Text$Ptr = Mem$Alloc(Size);
+    call Lst$Reset(Lst$Ptr);
+end;
+
+
+/*
+  Создание списка файлов на текущем диске
+  на входе:
+    Lst$Ptr - адрес под список файлов
+*/
+Make$File$List: proc(Lst$Ptr);
+    declare
+        Lst$Ptr address,
+        Mask$Ptr address,
+        pSrc address;
+
+    pSrc = Do$Find(0, .('???????????'));
+    do while (pSrc <> 0);
+        if ChkTyp(pSrc) <> 0 then
+            call Lst$Insert(Lst$Ptr, pSrc);
+        pSrc = Nx$Find;
+    end;
+end;
+
+
+
+
+/*****************************************************************************
+*
+*                               DISKS
+*
+******************************************************************************/
+
+/*
+  перерисовка окна менеджера файлов
+  на входе:
+    isFull - 0: перерисовывается только содержимое окна, иначе полная перерисовка
+*/
+ReDraw$File$Wnd: proc(isFull);
+    declare
+        isFull byte;
+    if isFull <> 0 then
+        call W$Show(.File$Wnd);
+    else
+        call W$Clear(.File$Wnd);
+    call W$PutLs(.File$Wnd, File$List.Text$Ptr+(File$List.Top*REC$SIZE));
+    call Show$Cursor(.File$Wnd, .File$List);
+end;
+
+/*
+  переход на новый диск: создание списка файлов и его вывод в окно
+*/
+Change$Disk: proc(nDisk);
+    declare nDisk byte;
+        call Lst$Reset(.File$List);
+        call Make$File$List(.File$List);
+        call Wnd$SetName(.File$Wnd, nDisk);
+        call ReDraw$File$Wnd(1);
+end;
+
+/*
+  Вывод панели выбора дисков
+*/
+Select$Disk: proc byte;
+    declare
+        nDrive byte;
+    call W$Show(.Disk$Wnd);
+    call Lst$HShow(.Disk$Wnd, .Disk$List);
+    nDrive = Lst$HSel(.Disk$Wnd, .Disk$List);
+    if nDrive <> -1 then
+        do;
+            if nDrive < Disk$List.Num then;
+                do;
+                    /* выбрали новый диск */
+                    call Set$Drv(nDrive);
+                    return -1;
+                end;
+        end;
+    return 0;                   /* диск остался старый */
+end;
+
+Select$User: proc byte;
+    declare
+        nUser byte;
+    call W$Show(.User$Wnd);
+    call Lst$HShow(.User$Wnd, .User$List);
+    nUser = Lst$HSel(.User$Wnd, .User$List);
+    if nUser <> -1 then
+        do;
+            if nUser < User$List.Num then;
+                do;
+                    /* выбрали новый диск */
+                    call Set$Usr(nUser);
+                    return -1;
+                end;
+        end;
+    return 0;                   /* диск остался старый */
+end;
+
+
+
+
+/*****************************************************************************
+*
+*                               INITIALIZE
+*
+******************************************************************************/
+
+/*
+  Подсчет дисков в системе и создание их списка
+*/
+Init$Disks: proc byte;
+    declare
+        i byte,
+        szBtn(4) byte;
+
+    /* подсчитываем количество дисков в системе */
+    call memset(.szBtn, 3, ' ');
+    szBtn(3) = 0;
+    do i = 0 to i < MAXDRIVES;
+        if SEL$DRV(i) > 0 then do;
+            szBtn(1) = i + 'A';
+            call Lst$Insert(.Disk$List, .szBtn);
+        end;
+    end;
+    i = SEL$DRV(StartDrive);
+    return Disk$List.Num;
+end;
+
+/*
+  инициализация списка user-областей
+*/
+Init$Users: proc;
+    declare
+        (i,d) byte,
+        szBtn(6) byte;
+
+    call memset(.szBtn, 4, ' ');
+    szBtn(4) = 0;
+    d = 0;
+    do i = 0 to i < 16;
+        if i > 9 then
+            szBtn(1) = '1';
+        szBtn(2) = d + '0';
+        call Lst$Insert(.User$List, .szBtn);
+        d = d + 1;
+        if d > 9 then
+            d = 0;
+    end;
+end;
+
+
+
+
+/*
+  Настройка окон
+*/
+SetUp$Windows: proc;
+    declare
+        nwidth byte;
+    /* корректируем параметры окна дисков */
+    if Disk$List.Num < 9 then
+        nwidth = Disk$List.Num * Disk$Wnd.CurWidth;
+    else
+        nwidth = 8*Disk$Wnd.CurWidth;
+    if nwidth < (Disk$Wnd.NameLen) then
+        nwidth = Disk$Wnd.NameLen;
+    call W$RSize(.Disk$Wnd, nwidth+2, Disk$Wnd.Height);
+end;
+
+
+/*
+  Распределение памяти
+*/
+Init$Var: proc;
+    FMem$Ptr = .MEMORY;
+    FMem$Size = Top$Mem-FMem$Ptr;
+    /* сохраняем начальные дисковод и user */
+    StartUser = Get$Usr;
+    StartDrive = MON3(19h);
+    CurDrive = SHL(StartUser, 4) or StartDrive;
+    /* инициализируем списки */
+    call Lst$Init(.User$List, 17*REC$SIZE);
+    call Lst$Init(.Disk$List, (MAXDRIVES+1)*REC$SIZE);
+    call Lst$Init(.File$List, Top$Mem-FMem$Ptr-REC$SIZE);
+end;
+
+
+
+/*****************************************************************************
+*
+*                                VIEWER'S
+*
+******************************************************************************/
+/*
+  ввод имени программы и краткой подсказки
+*/
+
+Show$Title: proc;
+    call VPrint(0000h, .(27,'F',4,14,'Image viewer                    ',0));
+    call VPrint(1700h, .Stat$View);
+end;
+
+/*
+  вывод окна о программе
+*/
+Show$About: proc;
+    declare
+        width byte,
+        key byte;
+
+    width = W$Width(.About$Wnd);
+    call W$Show(.About$Wnd);
+    call W$Goto(.About$Wnd, 0, 2);
+    call W$StBgr(.About$Wnd, width, 65h);
+    call W$Goto(.About$Wnd, 0, 11);
+    call W$StBgr(.About$Wnd, width, 65h);
+    call W$Goto(.About$Wnd, 0, 0);
+    call W$StBgr(.About$Wnd, width, 6Bh);
+    call W$Print(.About$Wnd, .About$Str);
+    key = GetCh;
+end;
+
+
+/*
+  выводит окошко с сообщением о ошибке
+*/
+Show$Error: proc(Str$Ptr);
+    declare
+        Str$Ptr address,
+        key byte,
+        slen byte,
+        wlen byte;
+
+    slen = strlen(Str$Ptr);
+    wlen = W$Width(.Error$Wnd);
+    key = (wlen - slen) / 2;
+    call W$Show(.Error$Wnd);
+    call W$Goto(.Error$Wnd, key, 1);
+    call W$Print(.Error$Wnd, Str$Ptr);
+    key = GetCh;
+end;
+
+
+
+
+/*
+
+  Загрузка файла в буфер IO$Buffer
+  на входе:
+    FName  - указатель на строку с именем файла (11 символов!)
+  на выходе:
+    размер считанных из файла данных
+*/
+Load$File: proc(FName$Ptr, Size) word;
+    declare
+        FName$Ptr address,
+        Handle byte,
+        res byte,
+        Size word;
+
+    Handle = fOpen(CurDrive and 0Fh, FName$Ptr);
+    if Handle = 0FFh then
+        return 0;
+    res = fRead(IO$Buffer, Size);
+    call fClose;
+
+    return res;
+end;
+
+
+
+
+Run$View: proc;
+    declare
+        FName$Ptr address,
+        Size word,
+        Type byte,
+        res byte,
+        key byte;
+
+    FName$Ptr = File$List.Text$Ptr+(File$List.Sel*REC$SIZE);
+    Size = fSize(FName$Ptr+1);
+    Type = GetTyp(FName$Ptr, Size);
+
+    if Type <> UNK$TYPE then
+        do;
+            /* выводим оповещение о загрузке файла */
+            call W$Show(.Wait$Wnd);
+            call W$Goto(.Wait$Wnd, 1, 1);
+            call W$Print(.Wait$Wnd, .('Please wait...',0));
+            /* загружаем файл и показываем его */
+            res = Load$File(FName$Ptr+1, Size);
+            if res <> 0 then
+                do;
+                    call ClsCol(0);
+                    do case Type;
+                        do;
+                        end;
+                        call doSTD(IO$Buffer); /* стандартный спектрумовский */
+                        call doTmx(IO$Buffer); /* timex 8x1 */
+                        call doMlt(IO$Buffer); /* multicolor 8x1 */
+                        call doMc(IO$Buffer);  /* multicolor 8x1 */
+                        call doIfl(IO$Buffer); /* multicolor 8x2 */
+                        call doSC2(IO$Buffer); /* msx */
+                        call doVM2(IO$Buffer); /* PK8000 */
+                    end;
+                    /* восстанавливаем буфер экрана */
+                    call VBSCls;
+                end;
+            else
+                call Show$Error(.('Disk I/O error!',0));
+        end;
+    else
+        call Show$Error(.('Unknown format!',0));
+end;
+
+
+Main$Loop: proc;
+    declare
+        isNext byte,
+        key byte,
+        FName$Ptr address,
+        Size word;
+
+    call Show$Title;
+    call Change$Disk(CurDrive and 0Fh);
+    do while 1;
+        key = GetCh;
+
+        if key = KEY$UP then
+            call Lst$Up(.File$Wnd, .File$List);
+        else if key = KEY$DOWN then
+            call Lst$Down(.File$Wnd, .File$List);
+        else if key = KEY$LEFT then
+            call Lst$MoveUp(.File$Wnd, .File$List, W$Heigh(.File$Wnd));
+        else if key = KEY$PgUP then
+            call Lst$MoveUp(.File$Wnd, .File$List, W$Heigh(.File$Wnd)*2-1);
+        else if key = KEY$RIGHT then
+            call Lst$MoveDown(.File$Wnd, .File$List, W$Heigh(.File$Wnd));
+        else if key = KEY$PgDOWN then
+            call Lst$MoveDown(.File$Wnd, .File$List, W$Heigh(.File$Wnd)*2-1);
+
+        else if key = KEY$ENTER then
+            do;
+                if File$List.Num <> 0 then
+                    do;
+                        isNext = 1;
+                        do while key <> KEY$ESC;
+                            if isNext <> 0 then
+                                call Run$View;
+                            key = GetCh;
+                            if key = KEY$LEFT then
+                                isNext = Lst$HideUp(.File$Wnd, .File$List);
+                            else if key = KEY$RIGHT then
+                                isNext = Lst$HideDown(.File$Wnd, .File$List);
+                            else
+                                key = KEY$ESC;
+                        end;
+                        call ClsCol(0);
+                        call Cls;
+                        call Show$Title;
+                        call ReDraw$File$Wnd(1);
+                    end;
+            end;
+
+        else if key = KEY$D then
+            do;
+                if Select$Disk <> 0 then
+                    call Change$Disk(CurDrive and 0Fh);
+                else
+                    call ReDraw$File$Wnd(0);
+            end;
+
+        else if key = KEY$U then
+            do;
+                if Select$User <> 0 then
+                    call Change$Disk(CurDrive and 0Fh);
+                else
+                    call ReDraw$File$Wnd(0);
+            end;
+
+        else if key = KEY$F1 then
+            do;
+                call Hide$Cursor(.File$Wnd, .File$List);
+                call Show$About;
+                call ReDraw$File$Wnd(0);
+            end;
+
+        else if key = KEY$ESC then
+            return;
+    end;
+end;
+
+
+
+
+MYENTRY:
+    call Init$Var;
+    if Init$Disks <> 0 then do;
+        call SetIRQ;
+        call VInit;
+        call KbInit;
+        call Init$Users;
+        call SetUp$Windows;
+
+        call Main$Loop;
+
+        call KbDone;
+        call VDone;
+        call RstIRQ;
+        call Set$Drv(StartDrive);
+        call Set$Usr(StartUser);
+    end;
+    call Boot;
+end EXCPM;
+eof
+

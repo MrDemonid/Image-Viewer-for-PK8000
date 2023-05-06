@@ -1,0 +1,133 @@
+MON1: proc(func, parm) external;
+  declare
+    func byte,
+    parm address;
+end;
+
+MON2: proc(func, parm) byte external;
+  declare
+    func byte,
+    parm address;
+end;
+
+MON3: proc(func) byte external;
+  declare
+    func byte;
+end;
+
+
+
+SEL$DRV: proc(nDisk) byte external;
+  declare
+    nDisk byte;
+end;
+
+Set$Drv: proc(nDisk) external;
+  declare
+    nDisk byte;
+end;
+
+Set$Usr: proc(nUser) external;
+  declare
+    nUser byte;
+end;
+
+Get$Usr: proc byte external;
+end;
+
+
+
+DIR$REC: proc(nRec) word external;
+  declare
+    nRec byte;
+end;
+
+
+Do$Find: proc(nDrive, FName) address external;
+  declare
+    nDrive byte,
+    FName  address;
+end;
+
+Nx$Find: proc address external;
+end;
+
+
+fSize: proc(fName) word external;
+  declare
+    fName address;
+end;
+
+fOpen: proc(nDrive, fName) byte external;
+  declare
+    nDrive byte,
+    fName  address;
+end;
+
+fClose: proc external;
+end;
+
+fRead: proc(Buf$Ptr, Size) byte external;
+  declare
+    Buf$Ptr address,
+    Size word;
+end;
+
+
+
+/*
+utoa: proc(wNum) address external;
+  declare
+    wNum word;
+end;
+
+utoh: proc(wNum) ADDRESS external;
+  declare
+    wNum WORD;
+end;
+*/
+
+memset: proc(Addr, Size, Char) external;
+  declare
+    Addr address,
+    Size word,
+    Char byte;
+end;
+
+memcpy: proc(Src, Dst, Len) external;
+  declare
+    Src address,
+    Dst address,
+    Len word;
+end;
+
+/*
+memcmp: proc(mem1, mem2, len) byte external;
+  declare
+    mem1 address,
+    mem2 address,
+    len byte;
+end;
+
+
+strcpy: proc(Src, Dst) address external;
+  declare
+    Src address,
+    Dst address;
+end;
+*/
+
+strlen: proc(Src) address external;
+  declare
+    Src address;
+end;
+
+
+SetIRQ: proc external;
+end;
+
+RstIRQ: proc external;
+end;
+
+Boot: proc external;
+end;
