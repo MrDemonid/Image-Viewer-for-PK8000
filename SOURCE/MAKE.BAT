@@ -5,7 +5,7 @@ BREAK ON
 set SOURCES=.
 set BINARY=..\bin
 
-if %PLM80% == "" goto nodef
+if "%PLM80%" == "" goto nodef
 set PLMBIN=%PLM80%\BIN
 set PLMLIB=%PLM80%\LIB
 goto clearprev
